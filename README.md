@@ -164,11 +164,11 @@ erDiagram
 
 | Показник | ДО | ПІСЛЯ |
 |---|---:|---:|
-| SELECT на запит | 21 = 1 + 2 × 10 | Очікується ручне виправлення та вимірювання |
-| Медіана HTTP latency, ms | 22.525 | Ще не виміряно |
-| p95 HTTP latency, ms | 28.893 | Ще не виміряно |
+| SELECT на запит | 21 = 1 + 2 × 10 | 4 |
+| Медіана HTTP latency, ms | 22.525 | 8.299 |
+| p95 HTTP latency, ms | 28.893 | 9.670 |
 
-Справжні результати й SQL-фрагменти збережено в `evidence/n1-before.json` та `evidence/n1-before.log`. Вихідний варіант репозиторію збережено в `evidence/n1-before-source.go.txt` для відтворення.
+Справжні результати й SQL-фрагменти збережено в `evidence/n1-before.json`, `evidence/n1-before.log`, `evidence/n1-after.json` та `evidence/n1-after.log`. Вихідний варіант репозиторію збережено в `evidence/n1-before-source.go.txt` для відтворення. Ручне виправлення додає `Preload("Authors").Preload("Category")` до запиту списку й видаляє цикл запитів для кожної книги.
 
 **ДО:** один SELECT книг, потім окремий SELECT категорії та авторів для кожної книги:
 
@@ -179,7 +179,14 @@ SELECT authors.* FROM "authors" JOIN book_authors ON book_authors.author_id = au
 -- The last two statements repeat for every book; see the full captured log.
 ```
 
-**ПІСЛЯ:** очікується ручний крок і фактичний SQL-лог. Кількість SELECT має бути сталою при збільшенні кількості книг; many-to-many може додавати окремий запит до таблиці зв'язків.
+**ПІСЛЯ:** фактичний лог містить чотири SELECT. Many-to-many потребує окремого запиту до таблиці зв'язків. Тест збільшення набору з 10 до 15 книг підтвердив сталу кількість: 4 → 4.
+
+```sql
+SELECT * FROM "book_authors" WHERE "book_authors"."book_id" IN ($1$,$2$,$3$,$4$,$5$,$6$,$7$,$8$,$9$,$10$);
+SELECT * FROM "authors" WHERE "authors"."id" IN ($1$,$2$,$3$,$4$,$5$);
+SELECT * FROM "categories" WHERE "categories"."id" IN ($1$,$2$,$3$);
+SELECT * FROM "books" ORDER BY books.id ASC LIMIT $1$;
+```
 
 Відтворення вимірювання: у першому терміналі `go run ./cmd/api 2>&1 | tee app.log`, у другому:
 
@@ -195,9 +202,9 @@ python3 scripts/measure_books.py --label after
 
 Розробка відбувається в `develop`, інтеграція — через Pull Request у `main`. Workflow: `.github/workflows/theme8-check.yml`.
 
-[Draft PR #1: develop → main](https://github.com/energy6x6/Go-with-GenAI-lessons-8/pull/1). Локально пройшли 12 перевірок міграцій і 62 HTTP-перевірки. Запуск тестів із race detector: 53 успішні, 1 невдалий (`TestBookListConstantQueries` до ручної оптимізації), 0 пропущених.
+[PR #1: develop → main](https://github.com/energy6x6/Go-with-GenAI-lessons-8/pull/1). Локально пройшли 12 перевірок міграцій і 63 HTTP-перевірки. Запуск тестів із race detector: 54 успішні, 0 невдалих, 0 пропущених.
 
-Докази для здачі: скриншоти здорового контейнера, Swagger з виконаними запитами, SQL-логи й вимірювання ДО/ПІСЛЯ, успішні тести та Summary GitHub Actions. Посилання на Google-документ буде додано після створення скриншотів. Завершення N+1 та зелений CI ще потребують підтвердження.
+Докази для здачі: Swagger з виконаними запитами, ручне виправлення, SQL-логи й вимірювання ДО/ПІСЛЯ, успішні тести та Summary GitHub Actions. Посилання на документ і фінальний CI буде додано після публікації доказів.
 
 ---
 
@@ -262,16 +269,16 @@ Dataset: 10 books. Endpoint: `GET /api/v1/books?limit=100`. One warm-up and 11 m
 
 | Metric | BEFORE | AFTER |
 |---|---:|---:|
-| SELECTs per request | 21 = 1 + 2 × 10 | Pending manual fix and measurement |
-| Median HTTP latency, ms | 22.525 | Not yet measured |
-| p95 HTTP latency, ms | 28.893 | Not yet measured |
+| SELECTs per request | 21 = 1 + 2 × 10 | 4 |
+| Median HTTP latency, ms | 22.525 | 8.299 |
+| p95 HTTP latency, ms | 28.893 | 9.670 |
 
-Actual evidence: `evidence/n1-before.json`, `evidence/n1-before.log`, and the retained baseline implementation `evidence/n1-before-source.go.txt`. The SQL excerpt above shows repeated author and category queries. The final preloading SQL and timings will be recorded after the student's manual change and server restart; no example timings are presented as measured results.
+Actual evidence: `evidence/n1-before.json`, `evidence/n1-before.log`, `evidence/n1-after.json`, `evidence/n1-after.log`, and the retained baseline implementation `evidence/n1-before-source.go.txt`. The student's manual change adds `Preload("Authors").Preload("Category")` and removes per-book queries. The captured SQL above shows four queries including the many-to-many join-table lookup. Scaling from 10 to 15 books keeps the count at 4 → 4.
 
 Start the API with `go run ./cmd/api 2>&1 | tee app.log`. In a second terminal run `python3 scripts/measure_books.py --label before`, then use `--label after` following the manual fix and restart. Avoid concurrent API requests during measurement. The final query count must remain constant as the number of books grows.
 
 ### 5. Delivery Evidence
 
-Development uses `develop`; integration into `main` goes through a Pull Request. The check workflow lives in `.github/workflows/theme8-check.yml`. Submission evidence will include container health, executed Swagger requests, before/after SQL and latency, successful tests, and the GitHub Actions Summary. A Google document link will be added after screenshots are prepared. The manual N+1 step and a green CI result are still pending.
+Development uses `develop`; integration into `main` goes through a Pull Request. The check workflow lives in `.github/workflows/theme8-check.yml`. Submission evidence includes executed Swagger requests, the manual change, before/after SQL and latency, successful tests, and the GitHub Actions Summary. The document and final CI links will be added after evidence is published.
 
-[Draft PR #1: develop → main](https://github.com/energy6x6/Go-with-GenAI-lessons-8/pull/1). Local validation passed all 12 migration checks and 62 HTTP checks. Race tests: 53 passed, 1 failed (`TestBookListConstantQueries` before manual optimization), 0 skipped.
+[PR #1: develop → main](https://github.com/energy6x6/Go-with-GenAI-lessons-8/pull/1). Local validation passed all 12 migration checks and 63 HTTP checks. Race tests: 54 passed, 0 failed, 0 skipped.

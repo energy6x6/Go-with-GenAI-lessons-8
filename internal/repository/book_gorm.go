@@ -126,17 +126,8 @@ func (r *gormBookRepository) List(ctx context.Context, f BookFilter) ([]model.Bo
 	if f.CategoryID != 0 {
 		q = q.Where("category_id = ?", f.CategoryID)
 	}
-	if err := q.Find(&books).Error; err != nil {
+	if err := q.Preload("Authors").Preload("Category").Find(&books).Error; err != nil {
 		return nil, translate(err)
-	}
-	// Exercise checkpoint: replace these per-book lookups with eager loading.
-	for i := range books {
-		if err := r.db.WithContext(ctx).First(&books[i].Category, books[i].CategoryID).Error; err != nil {
-			return nil, translate(err)
-		}
-		if err := r.db.WithContext(ctx).Table("authors").Select("authors.*").Joins("JOIN book_authors ON book_authors.author_id = authors.id").Where("book_authors.book_id = ?", books[i].ID).Order("authors.id ASC").Find(&books[i].Authors).Error; err != nil {
-			return nil, translate(err)
-		}
 	}
 	return books, nil
 }
