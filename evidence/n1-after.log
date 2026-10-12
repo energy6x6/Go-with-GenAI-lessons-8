@@ -1,0 +1,4 @@
+[1.974ms] [rows:11] SELECT * FROM "book_authors" WHERE "book_authors"."book_id" IN ($1$,$2$,$3$,$4$,$5$,$6$,$7$,$8$,$9$,$10$)
+[1.888ms] [rows:5] SELECT * FROM "authors" WHERE "authors"."id" IN ($1$,$2$,$3$,$4$,$5$)
+[1.769ms] [rows:3] SELECT * FROM "categories" WHERE "categories"."id" IN ($1$,$2$,$3$)
+[8.017ms] [rows:10] SELECT * FROM "books" ORDER BY books.id ASC LIMIT $1$
