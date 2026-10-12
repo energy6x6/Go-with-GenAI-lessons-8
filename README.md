@@ -165,8 +165,8 @@ erDiagram
 | Показник | ДО | ПІСЛЯ |
 |---|---:|---:|
 | SELECT на запит | 21 = 1 + 2 × 10 | 4 |
-| Медіана HTTP latency, ms | 22.525 | 8.299 |
-| p95 HTTP latency, ms | 28.893 | 9.670 |
+| Медіана HTTP latency, ms | 21.908 | 8.299 |
+| p95 HTTP latency, ms | 22.453 | 9.670 |
 
 Справжні результати й SQL-фрагменти збережено в `evidence/n1-before.json`, `evidence/n1-before.log`, `evidence/n1-after.json` та `evidence/n1-after.log`. Вихідний варіант репозиторію збережено в `evidence/n1-before-source.go.txt` для відтворення. Ручне виправлення додає `Preload("Authors").Preload("Category")` до запиту списку й видаляє цикл запитів для кожної книги.
 
@@ -204,7 +204,7 @@ python3 scripts/measure_books.py --label after
 
 [PR #1: develop → main](https://github.com/energy6x6/Go-with-GenAI-lessons-8/pull/1). Локально пройшли 12 перевірок міграцій і 63 HTTP-перевірки. Запуск тестів із race detector: 54 успішні, 0 невдалих, 0 пропущених.
 
-Докази для здачі: Swagger з виконаними запитами, ручне виправлення, SQL-логи й вимірювання ДО/ПІСЛЯ, успішні тести та Summary GitHub Actions. Посилання на документ і фінальний CI буде додано після публікації доказів.
+Докази для здачі: Swagger з виконаними запитами, ручне виправлення, SQL-логи й вимірювання ДО/ПІСЛЯ, успішні тести та Summary GitHub Actions.
 
 ---
 
@@ -270,8 +270,8 @@ Dataset: 10 books. Endpoint: `GET /api/v1/books?limit=100`. One warm-up and 11 m
 | Metric | BEFORE | AFTER |
 |---|---:|---:|
 | SELECTs per request | 21 = 1 + 2 × 10 | 4 |
-| Median HTTP latency, ms | 22.525 | 8.299 |
-| p95 HTTP latency, ms | 28.893 | 9.670 |
+| Median HTTP latency, ms | 21.908 | 8.299 |
+| p95 HTTP latency, ms | 22.453 | 9.670 |
 
 Actual evidence: `evidence/n1-before.json`, `evidence/n1-before.log`, `evidence/n1-after.json`, `evidence/n1-after.log`, and the retained baseline implementation `evidence/n1-before-source.go.txt`. The student's manual change adds `Preload("Authors").Preload("Category")` and removes per-book queries. The captured SQL above shows four queries including the many-to-many join-table lookup. Scaling from 10 to 15 books keeps the count at 4 → 4.
 
