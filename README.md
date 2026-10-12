@@ -195,6 +195,8 @@ python3 scripts/measure_books.py --label after
 
 Розробка відбувається в `develop`, інтеграція — через Pull Request у `main`. Workflow: `.github/workflows/theme8-check.yml`.
 
+[Draft PR #1: develop → main](https://github.com/energy6x6/Go-with-GenAI-lessons-8/pull/1). Локально пройшли 12 перевірок міграцій і 62 HTTP-перевірки. Запуск тестів із race detector: 53 успішні, 1 невдалий (`TestBookListConstantQueries` до ручної оптимізації), 0 пропущених.
+
 Докази для здачі: скриншоти здорового контейнера, Swagger з виконаними запитами, SQL-логи й вимірювання ДО/ПІСЛЯ, успішні тести та Summary GitHub Actions. Посилання на Google-документ буде додано після створення скриншотів. Завершення N+1 та зелений CI ще потребують підтвердження.
 
 ---
@@ -271,3 +273,5 @@ Start the API with `go run ./cmd/api 2>&1 | tee app.log`. In a second terminal r
 ### 5. Delivery Evidence
 
 Development uses `develop`; integration into `main` goes through a Pull Request. The check workflow lives in `.github/workflows/theme8-check.yml`. Submission evidence will include container health, executed Swagger requests, before/after SQL and latency, successful tests, and the GitHub Actions Summary. A Google document link will be added after screenshots are prepared. The manual N+1 step and a green CI result are still pending.
+
+[Draft PR #1: develop → main](https://github.com/energy6x6/Go-with-GenAI-lessons-8/pull/1). Local validation passed all 12 migration checks and 62 HTTP checks. Race tests: 53 passed, 1 failed (`TestBookListConstantQueries` before manual optimization), 0 skipped.
