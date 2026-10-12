@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.docnav/
+bin/
+*.log
+cover.out
+*.pid
+resp.json
+headers.txt
+.DS_Store
+backups/
