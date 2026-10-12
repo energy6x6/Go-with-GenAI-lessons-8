@@ -1,0 +1,21 @@
+[1.084ms] [rows:10] SELECT * FROM "books" ORDER BY books.id ASC LIMIT $1$
+[0.927ms] [rows:1] SELECT * FROM "categories" WHERE "categories"."id" = $1$ ORDER BY "categories"."id" LIMIT $2$
+[0.917ms] [rows:1] SELECT authors.* FROM "authors" JOIN book_authors ON book_authors.author_id = authors.id WHERE book_authors.book_id = $1$ ORDER BY authors.id ASC
+[0.931ms] [rows:1] SELECT * FROM "categories" WHERE "categories"."id" = $1$ ORDER BY "categories"."id" LIMIT $2$
+[0.897ms] [rows:1] SELECT authors.* FROM "authors" JOIN book_authors ON book_authors.author_id = authors.id WHERE book_authors.book_id = $1$ ORDER BY authors.id ASC
+[0.869ms] [rows:1] SELECT * FROM "categories" WHERE "categories"."id" = $1$ ORDER BY "categories"."id" LIMIT $2$
+[0.912ms] [rows:1] SELECT authors.* FROM "authors" JOIN book_authors ON book_authors.author_id = authors.id WHERE book_authors.book_id = $1$ ORDER BY authors.id ASC
+[1.113ms] [rows:1] SELECT * FROM "categories" WHERE "categories"."id" = $1$ ORDER BY "categories"."id" LIMIT $2$
+[1.323ms] [rows:2] SELECT authors.* FROM "authors" JOIN book_authors ON book_authors.author_id = authors.id WHERE book_authors.book_id = $1$ ORDER BY authors.id ASC
+[1.105ms] [rows:1] SELECT * FROM "categories" WHERE "categories"."id" = $1$ ORDER BY "categories"."id" LIMIT $2$
+[1.020ms] [rows:1] SELECT authors.* FROM "authors" JOIN book_authors ON book_authors.author_id = authors.id WHERE book_authors.book_id = $1$ ORDER BY authors.id ASC
+[0.930ms] [rows:1] SELECT * FROM "categories" WHERE "categories"."id" = $1$ ORDER BY "categories"."id" LIMIT $2$
+[0.975ms] [rows:1] SELECT authors.* FROM "authors" JOIN book_authors ON book_authors.author_id = authors.id WHERE book_authors.book_id = $1$ ORDER BY authors.id ASC
+[0.886ms] [rows:1] SELECT * FROM "categories" WHERE "categories"."id" = $1$ ORDER BY "categories"."id" LIMIT $2$
+[0.959ms] [rows:1] SELECT authors.* FROM "authors" JOIN book_authors ON book_authors.author_id = authors.id WHERE book_authors.book_id = $1$ ORDER BY authors.id ASC
+[0.916ms] [rows:1] SELECT * FROM "categories" WHERE "categories"."id" = $1$ ORDER BY "categories"."id" LIMIT $2$
+[0.946ms] [rows:1] SELECT authors.* FROM "authors" JOIN book_authors ON book_authors.author_id = authors.id WHERE book_authors.book_id = $1$ ORDER BY authors.id ASC
+[0.778ms] [rows:1] SELECT * FROM "categories" WHERE "categories"."id" = $1$ ORDER BY "categories"."id" LIMIT $2$
+[0.947ms] [rows:1] SELECT authors.* FROM "authors" JOIN book_authors ON book_authors.author_id = authors.id WHERE book_authors.book_id = $1$ ORDER BY authors.id ASC
+[0.892ms] [rows:1] SELECT * FROM "categories" WHERE "categories"."id" = $1$ ORDER BY "categories"."id" LIMIT $2$
+[0.888ms] [rows:1] SELECT authors.* FROM "authors" JOIN book_authors ON book_authors.author_id = authors.id WHERE book_authors.book_id = $1$ ORDER BY authors.id ASC

@@ -1,0 +1,432 @@
+name: Theme 8 check
+
+# Put this file into the student's repository as .github/workflows/theme8-check.yml
+# Every check is reported in the job summary (Actions -> run -> Summary) as PASS/FAIL;
+# a step fails at the END if at least one check failed, so one run shows all problems.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: theme8-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: Static checks
+    env:
+      POSTGRES_PASSWORD: compose-validation-example
+      APP_DB_PASSWORD: compose-validation-example
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Prepare check helper
+        run: |
+          cat > "$RUNNER_TEMP/check.sh" <<'EOF'
+          FAILED=0
+          header() {
+            { echo ""; echo "### $1"; echo ""; echo "| Result | Check |"; echo "|---|---|"; } >> "$GITHUB_STEP_SUMMARY"
+          }
+          pass() {
+            echo "| PASS | $1 |" >> "$GITHUB_STEP_SUMMARY"
+            echo "PASS: $1"
+          }
+          fail() {
+            FAILED=1
+            echo "| FAIL | $1 |" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=Check failed::$1"
+            echo "FAIL: $1"
+            if [ -n "${2:-}" ]; then echo "$2" | tail -n 40; fi
+          }
+          check() {
+            local name="$1"; shift
+            local out
+            if out=$("$@" 2>&1); then pass "$name"; else fail "$name" "$out"; fi
+          }
+          EOF
+
+      - name: Structure, formatting, build
+        run: |
+          source "$RUNNER_TEMP/check.sh"
+          header "Theme 8: static checks"
+
+          required=(
+            docker-compose.yml .env.example .gitignore
+            migrations/000001_init_schema.up.sql migrations/000001_init_schema.down.sql
+            migrations/000002_normalize_books.up.sql migrations/000002_normalize_books.down.sql
+            migrations/000003_seed_demo_data.up.sql migrations/000003_seed_demo_data.down.sql
+            internal/model/author.go internal/model/book.go internal/model/category.go
+            internal/model/copy.go internal/model/user.go
+            internal/repository/errors.go internal/repository/db.go internal/repository/migrate.go
+            internal/repository/book_repository.go internal/repository/author_repository.go
+            internal/repository/category_repository.go internal/repository/copy_repository.go
+            internal/handler/errors.go internal/handler/book_handler.go internal/handler/author_handler.go
+            internal/handler/category_handler.go internal/handler/copy_handler.go
+            cmd/api/main.go
+          )
+          missing=""
+          for f in "${required[@]}"; do [ -f "$f" ] || missing="$missing $f"; done
+          if [ -z "$missing" ]; then pass "Required files exist"; else fail "Required files exist" "missing:$missing"; fi
+
+          no_root_go() { [ -z "$(ls ./*.go 2>/dev/null)" ]; }
+          check "No .go files in the repository root" no_root_go
+
+          check "Module name is libratrack" grep -q '^module libratrack$' go.mod
+          check "go.mod has gorm" grep -q 'gorm.io/gorm' go.mod
+          check "go.mod has the gorm postgres driver" grep -q 'gorm.io/driver/postgres' go.mod
+          check "go.mod has golang-migrate" grep -q 'golang-migrate/migrate' go.mod
+          check "go.mod has gin" grep -q 'gin-gonic/gin' go.mod
+
+          book_no_text_fields() { ! grep -nE '^\s*(Author|Category)\s+string' internal/model/book.go; }
+          check "Book model has no plain-text Author/Category fields" book_no_text_fields
+          check "Book model uses many2many:book_authors" grep -q 'many2many:book_authors' internal/model/book.go
+
+          gofmt_clean() {
+            local out
+            out=$(gofmt -l .)
+            if [ -n "$out" ]; then echo "Not formatted:"; echo "$out"; return 1; fi
+          }
+          check "gofmt: all files formatted" gofmt_clean
+          check "go vet ./..." go vet ./...
+          check "go build ./..." go build ./...
+
+          tidy_clean() { go mod tidy && git diff --exit-code go.mod go.sum; }
+          check "go mod tidy leaves go.mod/go.sum unchanged" tidy_clean
+
+          no_automigrate() { ! grep -rn 'AutoMigrate' --include=*.go .; }
+          check "No AutoMigrate calls (schema only via migrations)" no_automigrate
+
+          errnotfound_once() { [ "$(grep -rn 'ErrNotFound = ' --include=*.go . | wc -l)" = "1" ]; }
+          check "ErrNotFound is declared exactly once" errnotfound_once
+
+          ascii_only() { ! grep -rnP '[^\x00-\x7F]' --include=*.go .; }
+          check "No non-ASCII characters in .go files" ascii_only
+
+          n1_fixed() { grep -rq 'Preload("Authors")' internal/repository && ! grep -rn 'NAIVE' internal; }
+          check "N+1 fixed: Preload is used and the NAIVE marker is gone" n1_fixed
+
+          tests_exist() { ls internal/model/*_test.go internal/repository/*_test.go internal/handler/*_test.go > /dev/null; }
+          check "Test files exist for model, repository and handler" tests_exist
+
+          env_not_tracked() { grep -qx '\.env' .gitignore && ! git ls-files --error-unmatch .env 2> /dev/null; }
+          check ".env is ignored and not committed" env_not_tracked
+          check ".env.example defines DATABASE_URL" grep -q '^DATABASE_URL=' .env.example
+
+          check "docker-compose.yml is valid" docker compose config -q
+          compose_pg() { grep -q 'postgres' docker-compose.yml && grep -q 'healthcheck' docker-compose.yml; }
+          check "docker-compose.yml has postgres with a healthcheck" compose_pg
+
+          pairs_ok() {
+            for f in migrations/*.up.sql; do
+              [ -f "${f%.up.sql}.down.sql" ] || { echo "no down migration for $f"; return 1; }
+            done
+          }
+          check "Every up migration has a down migration" pairs_ok
+
+          exit $FAILED
+
+  integration:
+    name: Migrations, tests, API smoke test
+    needs: static
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: libratrack
+          POSTGRES_PASSWORD: libratrack
+          POSTGRES_DB: libratrack
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U libratrack -d libratrack"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      PGPASSWORD: libratrack
+      APP_URL: postgres://libratrack:libratrack@localhost:5432/libratrack?sslmode=disable
+      TEST_URL: postgres://libratrack:libratrack@localhost:5432/libratrack_test?sslmode=disable
+      MIGR_URL: postgres://libratrack:libratrack@localhost:5432/libratrack_migr?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Create extra databases
+        run: |
+          psql -h localhost -U libratrack -d libratrack \
+            -c 'CREATE DATABASE libratrack_test' \
+            -c 'CREATE DATABASE libratrack_migr'
+
+      - name: Prepare check helper
+        run: |
+          cat > "$RUNNER_TEMP/check.sh" <<'EOF'
+          FAILED=0
+          header() {
+            { echo ""; echo "### $1"; echo ""; echo "| Result | Check |"; echo "|---|---|"; } >> "$GITHUB_STEP_SUMMARY"
+          }
+          pass() {
+            echo "| PASS | $1 |" >> "$GITHUB_STEP_SUMMARY"
+            echo "PASS: $1"
+          }
+          fail() {
+            FAILED=1
+            echo "| FAIL | $1 |" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=Check failed::$1"
+            echo "FAIL: $1"
+            if [ -n "${2:-}" ]; then echo "$2" | tail -n 40; fi
+          }
+          check() {
+            local name="$1"; shift
+            local out
+            if out=$("$@" 2>&1); then pass "$name"; else fail "$name" "$out"; fi
+          }
+          EOF
+
+      - name: Migrations (up, schema, seed, down, up)
+        run: |
+          source "$RUNNER_TEMP/check.sh"
+          header "Theme 8: migrations"
+
+          go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.17.1
+          export PATH="$PATH:$(go env GOPATH)/bin"
+
+          sql() { psql "$MIGR_URL" -v ON_ERROR_STOP=1 -tA -c "$1"; }
+          sql_must_fail() { ! psql "$MIGR_URL" -v ON_ERROR_STOP=1 -c "$1" > /dev/null 2>&1; }
+
+          check "migrate up applies all migrations" migrate -path migrations -database "$MIGR_URL" up
+
+          tables_ok() {
+            [ "$(sql "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('categories','authors','books','book_authors','copies','users')")" = "6" ]
+          }
+          check "All six tables exist" tables_ok
+
+          seed_books() { [ "$(sql "SELECT count(*) FROM books")" -ge 8 ]; }
+          check "Seed: at least 8 books" seed_books
+          seed_copies() { [ "$(sql "SELECT count(*) FROM copies")" -ge 20 ]; }
+          check "Seed: at least 20 copies" seed_copies
+          seed_multi_author() { [ "$(sql "SELECT count(*) FROM (SELECT book_id FROM book_authors GROUP BY book_id HAVING count(*) >= 2) t")" -ge 1 ]; }
+          check "Seed: at least one book has two authors" seed_multi_author
+          seed_author_books() { [ "$(sql "SELECT count(*) FROM (SELECT author_id FROM book_authors GROUP BY author_id HAVING count(*) >= 2) t")" -ge 1 ]; }
+          check "Seed: at least one author has two books" seed_author_books
+
+          bad_status() { sql_must_fail "INSERT INTO copies(book_id, inventory_no, status) VALUES (1, 'X-BAD', 'broken')"; }
+          check "DB rejects an invalid copy status (CHECK)" bad_status
+          bad_role() { sql_must_fail "INSERT INTO users(email, role) VALUES ('x@y.z', 'boss')"; }
+          check "DB rejects an invalid user role (CHECK)" bad_role
+          dup_isbn() { sql_must_fail "INSERT INTO books(title, isbn, category_id) SELECT 'dup', isbn, category_id FROM books LIMIT 1"; }
+          check "DB rejects a duplicate ISBN (UNIQUE)" dup_isbn
+          bad_fk() { sql_must_fail "INSERT INTO books(title, isbn, category_id) VALUES ('t', '1111111111', 999999)"; }
+          check "DB rejects a book with a missing category (FK)" bad_fk
+
+          check "migrate down -all (down migrations work)" migrate -path migrations -database "$MIGR_URL" down -all
+          check "migrate up works again after down" migrate -path migrations -database "$MIGR_URL" up
+
+          exit $FAILED
+
+      - name: Go tests against a real database
+        if: always()
+        run: |
+          source "$RUNNER_TEMP/check.sh"
+          header "Theme 8: go test"
+
+          export TEST_DATABASE_URL="$TEST_URL"
+          run_tests() {
+            set -o pipefail
+            go test ./... -race -covermode=atomic -coverprofile=cover.out -count=1 -v 2>&1 | tee test.log
+          }
+          check "go test ./... -race (with TEST_DATABASE_URL)" run_tests
+
+          no_skips() { ! grep -q -- '--- SKIP' test.log; }
+          check "No test was skipped (database tests really ran)" no_skips
+          enough() { [ "$(grep -c -- '^--- PASS' test.log)" -ge 20 ]; }
+          check "At least 20 top-level tests passed" enough
+
+          if [ -f cover.out ]; then
+            { echo ""; echo "Total coverage: $(go tool cover -func=cover.out | tail -n 1 | awk '{print $NF}')"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          exit $FAILED
+
+      - name: API smoke test (curl against the running server)
+        if: always()
+        run: |
+          source "$RUNNER_TEMP/check.sh"
+          header "Theme 8: API smoke test"
+
+          build_app() { go build -o bin/api ./cmd/api; }
+          check "go build ./cmd/api" build_app
+
+          DATABASE_URL="$APP_URL" MIGRATIONS_PATH=migrations PORT=8080 ./bin/api > app.log 2>&1 &
+          echo $! > app.pid
+          trap 'kill $(cat app.pid) 2>/dev/null || true' EXIT
+
+          code="000"
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/health || true)
+            [ "$code" = "200" ] && break
+            sleep 1
+          done
+          if [ "$code" != "200" ]; then
+            fail "Server starts and /health answers 200" "$(tail -n 40 app.log)"
+            exit 1
+          fi
+          pass "Server starts and /health answers 200"
+
+          BASE=http://localhost:8080/api/v1
+
+          api() {
+            local m="$1" p="$2" b="${3:-}"
+            if [ -n "$b" ]; then
+              curl -s -o resp.json -w '%{http_code}' -X "$m" "$BASE$p" -H 'Content-Type: application/json' -d "$b"
+            else
+              curl -s -o resp.json -w '%{http_code}' -X "$m" "$BASE$p"
+            fi
+          }
+          http() { # name expected-status method path [body]
+            local name="$1" want="$2"; shift 2
+            local got
+            got=$(api "$@")
+            if [ "$got" = "$want" ]; then pass "$name"; else fail "$name" "expected HTTP $want, got $got: $(head -c 300 resp.json)"; fi
+          }
+          jqis() { # name jq-filter expected-value (reads resp.json)
+            local name="$1" filter="$2" want="$3" got
+            got=$(jq -r "$filter" resp.json 2> /dev/null || echo "invalid json")
+            if [ "$got" = "$want" ]; then pass "$name"; else fail "$name" "expected '$want', got '$got'"; fi
+          }
+
+          # health and theme 7 regressions
+          health_ok() { [ "$(curl -s http://localhost:8080/health | jq -r .status)" = "ok" ]; }
+          check "/health returns {\"status\":\"ok\"}" health_ok
+          swagger_ok() { [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/swagger/index.html)" = "200" ]; }
+          check "Swagger UI is served at /swagger/index.html" swagger_ok
+          cors_ok() {
+            local status
+            status=$(curl -s -D headers.txt -o /dev/null -w '%{http_code}' -X OPTIONS "$BASE/books" \
+              -H 'Origin: http://example.com' -H 'Access-Control-Request-Method: POST')
+            { [ "$status" = "204" ] || [ "$status" = "200" ]; } && grep -qi '^access-control-allow-origin:' headers.txt
+          }
+          check "CORS preflight is handled" cors_ok
+
+          # categories and authors
+          http "POST /categories creates a category" 201 POST /categories '{"name":"Smoke Category"}'
+          CAT=$(jq -r '.id' resp.json)
+          http "Duplicate category name -> 409" 409 POST /categories '{"name":"Smoke Category"}'
+          jqis "Error envelope: error.code is conflict" '.error.code' conflict
+          http "POST /categories with an empty name -> 422" 422 POST /categories '{}'
+          http "GET /categories/{id}" 200 GET "/categories/$CAT"
+          http "GET /categories lists categories" 200 GET /categories
+          http "POST /authors creates an author" 201 POST /authors '{"full_name":"Smoke Author"}'
+          AUTH1=$(jq -r '.id' resp.json)
+          http "POST /authors creates a second author" 201 POST /authors '{"full_name":"Smoke Author Two"}'
+          AUTH2=$(jq -r '.id' resp.json)
+          http "GET /authors/{id}" 200 GET "/authors/$AUTH1"
+          http "GET /authors lists authors" 200 GET /authors
+          http "GET /authors/{unknown} -> 404" 404 GET /authors/999999
+
+          # books
+          BOOKBODY="{\"title\":\"Smoke Book\",\"isbn\":\"9990000000001\",\"category_id\":$CAT,\"author_ids\":[$AUTH1]}"
+          http "POST /books creates a book with relations" 201 POST /books "$BOOKBODY"
+          BOOK=$(jq -r '.id' resp.json)
+          jqis "Created book contains its author" '.authors | length' 1
+          jqis "Created book contains its category" '.category.id' "$CAT"
+          http "Duplicate ISBN -> 409" 409 POST /books "$BOOKBODY"
+          http "Unknown author id -> 422" 422 POST /books "{\"title\":\"Bad\",\"isbn\":\"9990000000002\",\"category_id\":$CAT,\"author_ids\":[999999]}"
+          jqis "Error envelope: error.code is invalid_reference" '.error.code' invalid_reference
+          http "Unknown author was NOT silently created" 404 GET /authors/999999
+          http "Unknown category -> 422" 422 POST /books "{\"title\":\"Bad\",\"isbn\":\"9990000000003\",\"category_id\":999999,\"author_ids\":[$AUTH1]}"
+          http "Missing title -> 422" 422 POST /books '{"isbn":"1234567890"}'
+          jqis "Error envelope: error.code is validation_error" '.error.code' validation_error
+          http "Empty author_ids -> 422" 422 POST /books "{\"title\":\"Bad\",\"isbn\":\"9990000000004\",\"category_id\":$CAT,\"author_ids\":[]}"
+          http "GET /books/{id}" 200 GET "/books/$BOOK"
+          jqis "GET /books/{id} returns authors" '.authors | length' 1
+          http "GET /books/{unknown} -> 404" 404 GET /books/999999
+          jqis "Error envelope: error.code is not_found" '.error.code' not_found
+
+          # copies and availability
+          http "POST /books/{id}/copies creates a copy" 201 POST "/books/$BOOK/copies" '{"inventory_no":"SMOKE-1"}'
+          jqis "Copy status defaults to available" '.status' available
+          http "POST second copy" 201 POST "/books/$BOOK/copies" '{"inventory_no":"SMOKE-2","status":"available"}'
+          http "POST third copy (lost)" 201 POST "/books/$BOOK/copies" '{"inventory_no":"SMOKE-3","status":"lost"}'
+          http "Duplicate inventory number -> 409" 409 POST "/books/$BOOK/copies" '{"inventory_no":"SMOKE-1"}'
+          http "Copy for an unknown book -> 404" 404 POST /books/999999/copies '{"inventory_no":"SMOKE-X"}'
+          http "Invalid copy status -> 422" 422 POST "/books/$BOOK/copies" '{"inventory_no":"SMOKE-4","status":"broken"}'
+          http "GET /books/{id}/copies" 200 GET "/books/$BOOK/copies"
+          jqis "The book has 3 copies" 'length' 3
+          http "GET /books/{id}/availability" 200 GET "/books/$BOOK/availability"
+          jqis "availability.book_id" '.book_id' "$BOOK"
+          jqis "availability.total_copies is 3" '.total_copies' 3
+          jqis "availability.available_copies is 2" '.available_copies' 2
+          http "availability of an unknown book -> 404" 404 GET /books/999999/availability
+
+          # update
+          http "PUT /books/{id} updates the book and replaces authors" 200 PUT "/books/$BOOK" "{\"title\":\"Smoke Book Updated\",\"isbn\":\"9990000000001\",\"category_id\":$CAT,\"author_ids\":[$AUTH2]}"
+          jqis "Title was updated" '.title' "Smoke Book Updated"
+          jqis "Authors were replaced (count)" '.authors | length' 1
+          jqis "Authors were replaced (id)" '.authors[0].id' "$AUTH2"
+          http "PUT /books/{unknown} -> 404" 404 PUT /books/999999 "{\"title\":\"X\",\"isbn\":\"9990000000009\",\"category_id\":$CAT,\"author_ids\":[$AUTH1]}"
+
+          # lists
+          http "GET /books?category_id filters by category" 200 GET "/books?category_id=$CAT"
+          jqis "Category filter returns exactly one book" 'length' 1
+          http "GET /books?limit=100" 200 GET "/books?limit=100"
+          jqis "Seeded data is visible (at least 8 books)" 'length >= 8' true
+          jqis "Every listed book has a category and authors" '[.[] | select(.category == null or (.authors | length) == 0)] | length' 0
+          http "Pagination: limit=2 returns 2 books" 200 GET "/books?limit=2&page=1"
+          jqis "limit=2 gives exactly 2 items" 'length' 2
+
+          # N+1: the number of SELECTs for the list must not depend on the number of books
+          count_selects() { grep -c 'SELECT' app.log || true; }
+          measure() {
+            local b a
+            sleep 0.3; b=$(count_selects)
+            curl -s -o /dev/null "$BASE/books?limit=100"
+            sleep 0.3; a=$(count_selects)
+            echo $((a - b))
+          }
+          Q1=$(measure)
+          for i in 1 2 3 4 5; do
+            api POST /books "{\"title\":\"Scale $i\",\"isbn\":\"999000020000$i\",\"category_id\":$CAT,\"author_ids\":[$AUTH1,$AUTH2]}" > /dev/null
+          done
+          Q2=$(measure)
+          if [ "$Q1" -ge 1 ] && [ "$Q1" = "$Q2" ] && [ "$Q1" -le 6 ]; then
+            pass "GET /books uses a constant number of SELECTs ($Q1) regardless of the number of books"
+          else
+            fail "GET /books uses a constant number of SELECTs (no N+1)" "SELECTs before=$Q1, after adding 5 books=$Q2. If both are 0, the GORM logger must be at Info level (db.go)."
+          fi
+
+          # delete and cascade
+          http "DELETE /books/{id} -> 204" 204 DELETE "/books/$BOOK"
+          http "GET deleted book -> 404" 404 GET "/books/$BOOK"
+          cascade_copies() { [ "$(psql "$APP_URL" -tA -c "SELECT count(*) FROM copies WHERE book_id=$BOOK")" = "0" ]; }
+          check "Deleting a book cascades to its copies" cascade_copies
+          cascade_links() { [ "$(psql "$APP_URL" -tA -c "SELECT count(*) FROM book_authors WHERE book_id=$BOOK")" = "0" ]; }
+          check "Deleting a book removes its author links" cascade_links
+          http "DELETE /books/{unknown} -> 404" 404 DELETE /books/999999
+
+          if [ "$FAILED" != "0" ]; then echo "---- last server log lines ----"; tail -n 40 app.log; fi
+          exit $FAILED
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: theme8-logs
+          path: |
+            app.log
+            test.log
+            cover.out
+          if-no-files-found: ignore

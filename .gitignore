@@ -4,6 +4,7 @@
 .docnav/
 bin/
 *.log
+!evidence/n1-*.log
 cover.out
 *.pid
 resp.json
